@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"    # RabbitMQ default port
+      - "15672:15672"  # Management interface port
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin123
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_logs:/var/log/rabbitmq
+    restart: unless-stopped
+
+  oracle:
+    image: container-registry.oracle.com/database/free:latest
+    container_name: oracle_free
+    ports:
+      - "1521:1521"    # TNS Listener
+      - "5500:5500"    # Enterprise Manager Express
+    environment:
+      - ORACLE_PWD=oracle123     # Password for SYS, SYSTEM, and PDBADMIN
+      - ORACLE_CHARACTERSET=AL32UTF8
+    volumes:
+      - e:/oracle/oradata:/opt/oracle/oradata
+    restart: unless-stopped
+    shm_size: '2gb'    # Shared memory size required for Oracle
+
+volumes:
+  rabbitmq_data:
+  rabbitmq_logs:  
+  oracle_data:
