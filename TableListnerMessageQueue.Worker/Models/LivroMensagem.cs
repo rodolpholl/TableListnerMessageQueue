@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 
 namespace TableListnerMessageQueue.Worker.Models
 {
-    public class LivroMensagem
+    public class LivroMensagem : IMessageMQ
     {
-        public long AutorId { get; set; }
-        public string Titulo { get; set; }
-        public int NumPaginas { get; set; }
-        public string Categoria { get; set; }
+        public long AutorId { get; set; } = default!;
+        public string Titulo { get; set; } = default!;
+        public int NumPaginas { get; set; } = default!;
+        public string Categoria { get; set; } = default!;
     }
 }

@@ -1,74 +1,55 @@
-﻿using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Oracle.ManagedDataAccess.Client;
-using Oracle.ManagedDataAccess.Types;
+﻿using Oracle.ManagedDataAccess.Client;
 using RabbitMQ.Client;
 using System.Data;
-using System.Text;
 using System.Text.Json;
 using TableListnerMessageQueue.Worker.Models;
+using TableListnerMessageQueue.Worker.Services.Autor;
+using TableListnerMessageQueue.Worker.Services.Cliente;
 
 namespace TableListnerMessageQueue.Worker.Services;
 
-public class PublisherService : BackgroundService
+public class OracleQueueRouterService : BackgroundService
 {
-    private readonly ILogger<PublisherService> _logger;
+    private readonly ILogger<OracleQueueRouterService> _logger;
     private readonly IConfiguration _configuration;
     private readonly string _oracleConnectionString;
-    private readonly string _rabbitMQHostname;
-    private readonly string _rabbitMQQueueName;
+    
     private readonly string _oracleAQQueueName;
-    private readonly string _rabbitMQUsername;
-    private readonly string _rabbitMQPassword;
+    
+
+    //Publish services
+    private readonly ClientePublisher _clientePublisher;
+    private readonly AutorPublisher _autorPublisher;
+
 
     private IConnection? _rabbitMQConnection;
     private IChannel? _rabbitMQChannel;
+    private  Dictionary<int, IMessageStrategy> _messageStrategies = default!;
 
-    private readonly Random _random = new();
-    private readonly List<string> _categorias = new() { "ROMANCE", "AUTOAJUDA", "CIENTÍFICO" };
+    
 
-    public PublisherService(ILogger<PublisherService> logger, IConfiguration configuration)
+    public OracleQueueRouterService(ILogger<OracleQueueRouterService> logger, IConfiguration configuration, AutorPublisher autorPublisher, ClientePublisher clientePublisher)
     {
         _logger = logger;
         _configuration = configuration;
         _oracleConnectionString = _configuration.GetConnectionString("OracleDb") ?? throw new InvalidOperationException("Oracle connection string not found");
-        _rabbitMQHostname = _configuration["RabbitMQ:Hostname"] ?? "localhost";
-        _rabbitMQQueueName = _configuration["RabbitMQ:QueueName"] ?? "livro_criacao_queue";
+        
         _oracleAQQueueName = _configuration["OracleAQ:QueueName"] ?? "AUTOR_NOVOS_JSON_QUEUE";
-        _rabbitMQUsername = _configuration["RabbitMQ:Username"] ?? "admin";
-        _rabbitMQPassword = _configuration["RabbitMQ:Password"] ?? "admin123";
+        
+        _autorPublisher = autorPublisher;
+        _clientePublisher = clientePublisher;
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("AutorProcessor iniciando...");
-        // Configura RabbitMQ
-        var factory = new ConnectionFactory() { HostName = _rabbitMQHostname, UserName = _rabbitMQUsername, Password = _rabbitMQPassword };
-        try
-        {
-            _rabbitMQConnection = await factory.CreateConnectionAsync(cancellationToken);   
-            _rabbitMQChannel = await _rabbitMQConnection.CreateChannelAsync();
-            
-            if (_rabbitMQChannel == null)
-            {
-                throw new InvalidOperationException("Não foi possível criar o canal do RabbitMQ");
-            }
+        
 
-            await _rabbitMQChannel.QueueDeclareAsync(
-                queue: _rabbitMQQueueName,
-                durable: false,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null);
-            
-            _logger.LogInformation("Conectado ao RabbitMQ. Fila '{QueueName}' declarada.", _rabbitMQQueueName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Falha ao conectar com RabbitMQ");
-            throw;
-        }
+        _messageStrategies = new Dictionary<int, IMessageStrategy>
+            {
+                { 1, new AutorMessageStrategy(_autorPublisher) },
+                { 2, new ClienteMessageStrategy(_clientePublisher) }
+            };
 
         await base.StartAsync(cancellationToken);
     }
@@ -81,23 +62,7 @@ public class PublisherService : BackgroundService
         {
             try
             {
-                var autorMensagem = await DequeueFromOracleAQ(stoppingToken);
-
-                if (autorMensagem != null)
-                {
-                    _logger.LogInformation("Mensagem AQ recebida para Autor ID: {AutorId}, Nome: {AutorNome}",
-                        autorMensagem.Id, autorMensagem.Nome);
-
-                    var livroMensagem = GerarDadosLivro(autorMensagem);
-                    await PublishToRabbitMQ(livroMensagem);
-
-                    _logger.LogInformation("Livro para Autor ID {AutorId} publicado no RabbitMQ. Título: {Titulo}",
-                        autorMensagem.Id, livroMensagem.Titulo);
-                }
-                else
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                }
+                await DequeueFromOracleAQ(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -145,7 +110,7 @@ public class PublisherService : BackgroundService
         await base.StopAsync(cancellationToken);
     }
 
-    private async Task<AutorMensagem?> DequeueFromOracleAQ(CancellationToken stoppingToken)
+    private async Task DequeueFromOracleAQ(CancellationToken stoppingToken)
     {
         using var connection = new OracleConnection(_oracleConnectionString);
         await connection.OpenAsync(stoppingToken);
@@ -179,7 +144,7 @@ public class PublisherService : BackgroundService
 
         cmd.Parameters.Add(new OracleParameter("message_text", OracleDbType.Varchar2, ParameterDirection.Output)
         {
-            Size = 4000
+            Size = 32767
         });
 
         try
@@ -194,16 +159,19 @@ public class PublisherService : BackgroundService
             {
                 _logger.LogDebug("JSON recebido: {Json}", jsonPayload);
 
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-
-                var autorMensagem = JsonSerializer.Deserialize<AutorMensagem>(jsonPayload, options);
-                if (autorMensagem != null)
+                var dbQueueMensagem = JsonSerializer.Deserialize<DbQueueModel>(jsonPayload);
+                if (dbQueueMensagem != null)
                 {
                     _logger.LogInformation("Mensagem deserializada com sucesso");
-                    return autorMensagem;
+                    
+                    if (_messageStrategies.TryGetValue((int)dbQueueMensagem.Table, out var strategy))
+                    {
+                        await strategy.ProcessMessage(dbQueueMensagem.Data);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Tipo de mensagem não suportado: {Table}", dbQueueMensagem.Table);
+                    }
                 }
             }
             else
@@ -211,12 +179,10 @@ public class PublisherService : BackgroundService
                 _logger.LogDebug("Nenhuma mensagem disponível na fila");
             }
 
-            return null;
         }
         catch (OracleException oex) when (oex.Number == 25228 || oex.Number == 25254)
         {
             _logger.LogDebug("Timeout ao aguardar mensagem");
-            return null;
         }
         catch (Exception ex)
         {
@@ -225,45 +191,4 @@ public class PublisherService : BackgroundService
         }
     }
 
-    private LivroMensagem GerarDadosLivro(AutorMensagem autor)
-    {
-        var titulo = $"Livro cadastrado para o autor {autor.Nome}";
-        var numPaginas = _random.Next(50, 201);
-        var categoria = _categorias[_random.Next(_categorias.Count)];
-
-        return new LivroMensagem
-        {
-            AutorId = autor.Id,
-            Titulo = titulo,
-            NumPaginas = numPaginas,
-            Categoria = categoria
-        };
-    }
-
-    private  Task PublishToRabbitMQ(LivroMensagem livro)
-    {
-        if (_rabbitMQChannel == null)
-        {
-            throw new InvalidOperationException("Canal do RabbitMQ não está disponível");
-        }
-
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        var jsonLivro = JsonSerializer.Serialize(livro, options);
-        var body = Encoding.UTF8.GetBytes(jsonLivro);
-
-        // Corrigido: especificando explicitamente o tipo de argumento como 'IBasicProperties'
-        _rabbitMQChannel.BasicPublishAsync(
-            exchange: "",
-            routingKey: _rabbitMQQueueName,
-            mandatory: false,
-            basicProperties: new BasicProperties(),
-            body: body
-        );
-
-        return Task.CompletedTask;
-    }
 }

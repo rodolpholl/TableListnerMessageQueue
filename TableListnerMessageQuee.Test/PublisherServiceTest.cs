@@ -10,15 +10,15 @@ namespace TableListnerMessageQuee.Test;
 [TestClass]
 public sealed class PublisherServiceTest
 {
-    private Mock<ILogger<PublisherService>> _loggerMock = null!;
+    private Mock<ILogger<OracleQueueRouterService>> _loggerMock = null!;
     private Mock<IConfiguration> _configurationMock = null!;
-    private PublisherService _publisherService = null!;
+    private OracleQueueRouterService _publisherService = null!;
 
     [TestInitialize]
     public void Setup()
     {
         // Setup logger mock
-        _loggerMock = new Mock<ILogger<PublisherService>>();
+        _loggerMock = new Mock<ILogger<OracleQueueRouterService>>();
 
         // Setup configuration mock
         _configurationMock = new Mock<IConfiguration>();
@@ -39,7 +39,7 @@ public sealed class PublisherServiceTest
         _configurationMock.Setup(x => x["OracleAQ:QueueName"]).Returns("test_aq_queue");
 
         // Create service instance
-        _publisherService = new PublisherService(
+        _publisherService = new OracleQueueRouterService(
             _loggerMock.Object,
             _configurationMock.Object);
     }
@@ -126,11 +126,11 @@ public sealed class PublisherServiceTest
     {
         // Arrange
         var configMock = new Mock<IConfiguration>();
-        configMock.Setup(x => x.GetConnectionString("OracleDb")).Returns((string)null!);
+        configMock.Setup(x => x.GetConnectionString(It.IsAny<string>())).Returns((string)null!);
 
         // Act & Assert
         Assert.ThrowsException<InvalidOperationException>(() => 
-            new PublisherService(
+            new OracleQueueRouterService(
                 _loggerMock.Object,
                 configMock.Object));
     }
@@ -148,7 +148,7 @@ public sealed class PublisherServiceTest
         };
 
         // Act & Assert
-        var methodInfo = typeof(PublisherService).GetMethod("PublishToRabbitMQ", 
+        var methodInfo = typeof(OracleQueueRouterService).GetMethod("PublishToRabbitMQ", 
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         await Assert.ThrowsExceptionAsync<InvalidOperationException>(
