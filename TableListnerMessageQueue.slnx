@@ -2,5 +2,6 @@
   <Folder Name="/Itens de Solução/">
     <File Path="scripts_ora.sql" />
   </Folder>
+  <Project Path="TableListnerMessageQuee.Test/TableListnerMessageQuee.Test.csproj" Id="138cde07-ac51-49df-9a19-9920834b2045" />
   <Project Path="TableListnerMessageQueue.Worker/TableListnerMessageQueue.Worker.csproj" Id="72b29ba5-b41c-4a1a-acbc-825cb90c55c9" />
 </Solution>
