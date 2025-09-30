@@ -1,11 +1,9 @@
-using TableListnerMessageQueue.Worker;
 using TableListnerMessageQueue.Worker.Services;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Adicione seus serviços diretamente ao builder.Services
-builder.Services.AddHostedService<AutorProcessorService>();
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<PublisherService>();
+builder.Services.AddHostedService<ConsumerService>();
 
 var host = builder.Build();
 host.Run();
